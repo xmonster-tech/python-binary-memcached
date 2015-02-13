@@ -1,19 +1,29 @@
 import logging
+import itertools
 from hash_ring.hash_ring import HashRing
 from bmemcached.protocol import Protocol
 
 try:
-    from cPickle import loads, dumps
+    import cPickle as pickle
 except ImportError:
-    from pickle import loads, dumps
+    import pickle
+
+
+from bmemcached.protocol import Protocol
+
+
+_SOCKET_TIMEOUT = 3
 
 
 class Client(object):
     """
     This is intended to be a client class which implement standard cache interface that common libs do.
     """
-    def __init__(self, servers=['127.0.0.1:11211'], username=None,
-                 password=None, compression=None):
+    def __init__(self, servers=('127.0.0.1:11211',), username=None,
+                 password=None, compression=None,
+                 socket_timeout=_SOCKET_TIMEOUT,
+                 pickleProtocol=0,
+                 pickler=pickle.Pickler, unpickler=pickle.Unpickler):
         """
         :param servers: A list of servers with ip[:port] or unix socket.
         :type servers: list
@@ -25,8 +35,11 @@ class Client(object):
         self.username = username
         self.password = password
         self.compression = compression
+        self.socket_timeout = socket_timeout
+        self.pickleProtocol = pickleProtocol
+        self.pickler = pickler
+        self.unpickler = unpickler
         self.set_servers(servers)
-
 
     @property
     def servers(self):
@@ -49,8 +62,33 @@ class Client(object):
             servers = [servers]
 
         assert servers, "No memcached servers supplied"
-        self._servers = HashRing([Protocol(server, self.username, self.password,
-                                 self.compression) for server in servers])
+        self._servers = HashRing([Protocol(server,
+                                           self.username,
+                                           self.password,
+                                           self.compression,
+                                           self.socket_timeout,
+                                           self.pickleProtocol,
+                                           self.pickler,
+                                           self.unpickler) for server in servers])
+
+    def _set_retry_delay(self, value):
+        for server in self._servers:
+            server.set_retry_delay(value)
+
+    def enable_retry_delay(self, enable):
+        """
+        Enable or disable delaying between reconnection attempts.
+
+        The first reconnection attempt will always happen immediately, so intermittent network
+        errors don't cause caching to turn off.  The retry delay takes effect after the first
+        reconnection fails.
+
+        The reconnection delay is enabled by default for TCP connections, and disabled by
+        default for Unix socket connections.
+        """
+        # The public API only allows enabling or disabling the delay, so it'll be easier to
+        # add exponential falloff in the future.  _set_retry_delay is exposed for tests.
+        self._set_retry_delay(5 if enable else 0)
 
     def get(self, key, get_cas=False):
         """
@@ -99,20 +137,13 @@ class Client(object):
         :rtype: dict
         """
 
-        raise NotImplementedError()
+        result = {}
+        for server, keys in itertools.groupby(keys, key=self.get_server):
+            for key, value_and_cas in server.get_multi(list(keys)).iteritems():
+                # Protocol#get_multi returns both value and cas, so we need to discard the cas
+                result[key] = value_and_cas[0]
 
-        d = {}
-        if keys:
-            for server in self.servers:
-                results = server.get_multi(keys)
-                if not get_cas:
-                    for key, (value, cas) in results.items():
-                        results[key] = value
-                d.update(results)
-                keys = [_ for _ in keys if not _ in d]
-                if not keys:
-                    break
-        return d
+        return result
 
     def set(self, key, value, time=0):
         """
@@ -155,12 +186,10 @@ class Client(object):
         :return: True in case of success and False in case of failure
         :rtype: bool
         """
-        raise NotImplementedError()
 
         returns = []
-        if mappings:
-            for server in self.servers:
-                returns.append(server.set_multi(mappings, time))
+        for server, keys in itertools.groupby(mappings.iterkeys(), key=self.get_server):
+            returns.append(server.set_multi({k: mappings[k] for k in keys}, time=time))
 
         return all(returns)
 
@@ -204,6 +233,13 @@ class Client(object):
         :rtype: bool
         """
         return self.get_server(key).delete(key)
+
+    def delete_multi(self, keys):
+        returns = []
+        for server, keys in itertools.groupby(keys, key=self.get_server):
+            returns.append(server.delete_multi(list(keys)))
+
+        return all(returns)
 
     def incr(self, key, value):
         """

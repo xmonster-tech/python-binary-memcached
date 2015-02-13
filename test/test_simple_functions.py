@@ -1,13 +1,12 @@
 import unittest
 import bmemcached
-from bmemcached.protocol import Protocol
 
 
 class MemcachedTests(unittest.TestCase):
     def setUp(self):
         self.server = '127.0.0.1:11211'
         self.server = '/tmp/memcached.sock'
-        self.client = bmemcached.Client(self.server) #, 'user', 'password')
+        self.client = bmemcached.Client(self.server)
 
     def tearDown(self):
         self.reset()
@@ -26,8 +25,8 @@ class MemcachedTests(unittest.TestCase):
             'test_key2': 'value2'}))
 
     def testSetMultiBigData(self):
-        self.client.set_multi(dict(
-                (unicode(k).encode(), b'value') for k in range(32767)))
+        self.client.set_multi(
+            dict((unicode(k).encode(), b'value') for k in range(32767)))
 
     def testGet(self):
         self.client.set('test_key', 'test')
@@ -134,6 +133,10 @@ class MemcachedTests(unittest.TestCase):
         self.assertEqual(1, value)
         self.assertTrue(isinstance(value, int))
 
+    def testGetBoolean(self):
+        self.client.set('test_key', True)
+        self.assertTrue(self.client.get('test_key') is True)
+
     def testGetObject(self):
         self.client.set('test_key', {'a': 1})
         value = self.client.get('test_key')
@@ -145,6 +148,13 @@ class MemcachedTests(unittest.TestCase):
         self.client.set('test_key', 'test')
         self.assertTrue(self.client.delete('test_key'))
         self.assertEqual(None, self.client.get('test_key'))
+
+    def testDeleteMulti(self):
+        self.client.set_multi({
+            'test_key': 'value',
+            'test_key2': 'value2'})
+
+        self.assertTrue(self.client.delete_multi(['test_key', 'test_key2']))
 
     def testDeleteUnknownKey(self):
         self.assertTrue(self.client.delete('test_key'))
@@ -191,3 +201,29 @@ class MemcachedTests(unittest.TestCase):
         self.client.set('test_key', 'test')
         self.client.disconnect_all()
         self.assertEqual('test', self.client.get('test_key'))
+
+
+class TimeoutMemcachedTests(unittest.TestCase):
+    def setUp(self):
+        self.server = '127.0.0.1:11211'
+        self.client = None
+
+    def tearDown(self):
+        self.client.disconnect_all()
+        client = bmemcached.Client(self.server, 'user', 'password',
+                                   socket_timeout=None)
+        client.delete('timeout_key')
+        client.delete('timeout_key_none')
+        client.disconnect_all()
+
+    def testTimeout(self):
+        self.client = bmemcached.Client(self.server, 'user', 'password',
+                                        socket_timeout=0.00000000000001)
+        self.client.set('timeout_key', 'test')
+        self.assertEqual(self.client.get('timeout_key'), None)
+
+    def testTimeoutNone(self):
+        self.client = bmemcached.Client(self.server, 'user', 'password',
+                                        socket_timeout=None)
+        self.client.set('test_key_none', 'test')
+        self.assertEqual(self.client.get('test_key_none'), 'test')
