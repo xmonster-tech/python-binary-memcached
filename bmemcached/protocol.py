@@ -368,7 +368,7 @@ class Protocol(threading.local):
         :return: Returns (value, cas).
         :rtype: object
         """
-        logger.info('Getting key %s' % key)
+        logger.debug('Getting key %s' % key)
         data = struct.pack(self.HEADER_STRUCT +
                                          self.COMMANDS['get']['struct'] % (len(key)),
                                          self.MAGIC['request'],
@@ -851,4 +851,3 @@ class Protocol(threading.local):
         if self.connection:
             self.connection.close()
             self.connection = None
-
