@@ -461,9 +461,9 @@ class Protocol(threading.local):
         :return: True in case of success and False in case of failure
         :rtype: bool
         """
-        logger.info('Setting/adding/replacing key %s.' % key)
+        logger.debug('Setting/adding/replacing key %s.' % key)
         flags, value = self.serialize(value)
-        logger.info('Value bytes %d.' % len(value))
+        logger.debug('Value bytes %d.' % len(value))
         if six.PY3 and isinstance(value, str):
             value = value.encode('utf8')
 
@@ -732,7 +732,7 @@ class Protocol(threading.local):
         :return: True in case of success and False in case of failure.
         :rtype: bool
         """
-        logger.info('Deleting keys %r' % keys)
+        logger.debug('Deleting keys %r' % keys)
         if six.PY2:
             msg = ''
         else:
@@ -775,7 +775,7 @@ class Protocol(threading.local):
         :return: True in case of success, False in case of failure
         :rtype: bool
         """
-        logger.info('Flushing memcached')
+        logger.debug('Flushing memcached')
         self._send(struct.pack(self.HEADER_STRUCT +
                                          self.COMMANDS['flush']['struct'],
                                          self.MAGIC['request'],
